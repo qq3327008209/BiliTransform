@@ -13,7 +13,7 @@
 | 步骤 | 安装方式         | 说明/入口                                  |
 | ---- | -------------- | ------------------------------------------ |
 | 1    | ScriptCat      | [点击此处安装脚本](https://scriptcat.org/zh-CN/script-show-page/5639) |
-| 2    | 浏览器扩展      | [在releases下载](#) |
+| 2    | 浏览器扩展      | [点击此处安装脚本](https://microsoftedge.microsoft.com/addons/detail/eamljimiedllfpaoecnlplhcokgckmga) |
 | 3    | 打开B站视频     | 任意视频页面，控制栏右侧出现 **旋转图标 🌀** |
 
 <sub>如果图标未显示，请尝试刷新页面或稍等片刻（脚本等待播放器加载）。</sub>
