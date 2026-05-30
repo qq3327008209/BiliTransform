@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站视频旋转与缩放
-// @namespace    http://tampermonkey.net/&&https://scriptcat.org/zh-CN
-// @version      1.3.9
+// @namespace    http://tampermonkey.net/
+// @version      1.4.0
 // @description  为B站视频添加旋转和缩放滑条控制，支持鼠标中键滚动调节，支持鼠标左键长按拖动调整位置（不触发视频暂停/播放）
 // @author       John Smish
 // @match        *://www.bilibili.com/*
@@ -14,7 +14,6 @@
 (function() {
     'use strict';
 
-    // ==================== CSS样式 ====================
     const style = document.createElement('style');
     style.textContent = `
 .bcmnp-rotate-box {
@@ -135,33 +134,6 @@
     box-shadow: 0 2px 8px rgba(0, 174, 236, 0.3);
 }
 
-/* 拖动提示样式 */
-.bcmnp-drag-hint {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background-color: rgba(0, 0, 0, 0.8);
-    color: white;
-    padding: 8px 16px;
-    border-radius: 20px;
-    font-size: 14px;
-    pointer-events: none;
-    z-index: 10000;
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    animation: bcmnp-fadeOut 1.5s ease forwards;
-    white-space: nowrap;
-}
-
-@keyframes bcmnp-fadeOut {
-    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
-    10% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    100% { opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
-}
-
-/* 拖动状态光标 - 应用到全局 */
 body.bcmnp-dragging-active {
     cursor: grabbing !important;
 }
@@ -170,14 +142,13 @@ body.bcmnp-dragging-active {
     cursor: grabbing !important;
 }
 
-/* 重置位置按钮 */
-.bcmnp-reset-position {
-    margin-top: 8px;
+.bcmnp-reset-group {
     display: flex;
-    justify-content: center;
+    gap: 12px;
+    margin-top: 8px;
 }
 
-.bcmnp-reset-btn {
+.bcmnp-reset-group .bcmnp-reset-btn {
     background-color: rgba(255, 255, 255, 0.15);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
@@ -186,17 +157,16 @@ body.bcmnp-dragging-active {
     font-size: 12px;
     cursor: pointer;
     transition: all 0.2s ease;
-    width: 100%;
+    flex: 1;
     text-align: center;
 }
 
-.bcmnp-reset-btn:hover {
+.bcmnp-reset-group .bcmnp-reset-btn:hover {
     background-color: rgba(255, 255, 255, 0.25);
     border-color: rgba(255, 255, 255, 0.2);
     color: #00AEEC;
 }
 
-/* 按钮动画相关 */
 @keyframes rotateToggle {
     0% { transform: scale(1) translateX(0); }
     25% { transform: scale(1) translateX(-3px); }
@@ -208,7 +178,6 @@ body.bcmnp-dragging-active {
     animation: rotateToggle 0.8s ease;
 }
 
-/* 拦截点击的覆盖层 */
 .bcmnp-click-interceptor {
     position: fixed;
     top: 0;
@@ -224,33 +193,9 @@ body.bcmnp-dragging-active {
 .bcmnp-click-interceptor.active {
     display: block;
 }
-
-/* 当前角度指示器 */
-.bcmnp-angle-indicator {
-    display: inline-block;
-    width: 16px;
-    height: 16px;
-    border: 2px solid #00AEEC;
-    border-radius: 50%;
-    margin-left: 4px;
-    position: relative;
-}
-
-.bcmnp-angle-indicator::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 2px;
-    height: 6px;
-    background-color: #00AEEC;
-    transform: translate(-50%, -50%) rotate(var(--angle, 0deg));
-    transform-origin: center;
-}
     `;
     document.head.appendChild(style);
 
-    // ==================== HTML模板 ====================
     const rotateHtml = `
 <div class="bpx-player-ctrl-btn bpx-player-ctrl-rotate" role="button" aria-label="旋转">
     <div class="bpx-player-ctrl-btn-icon">
@@ -295,15 +240,15 @@ body.bcmnp-dragging-active {
                     <button data-angle="270" class="bcmnp-preset-btn">270°</button>
                 </div>
             </div>
-            <div class="bcmnp-reset-position">
+            <div class="bcmnp-reset-group">
                 <button class="bcmnp-reset-btn" id="reset-position-btn">重置视频位置</button>
+                <button class="bcmnp-reset-btn" id="reset-all-btn">一键重置所有</button>
             </div>
         </div>
     </div>
 </div>
     `;
 
-    // ==================== 工具函数 ====================
     function waitUntilElementReady(selector) {
         return new Promise((resolve, reject) => {
             const maxTries = 100;
@@ -342,35 +287,16 @@ body.bcmnp-dragging-active {
         );
     }
 
-    function showDragHint(message = '按住左键拖动可移动视频位置') {
-        const videoWrap = document.querySelector('.bpx-player-video-wrap');
-        if (!videoWrap) return;
-        
-        const hint = document.createElement('div');
-        hint.className = 'bcmnp-drag-hint';
-        hint.textContent = message;
-        videoWrap.appendChild(hint);
-        
-        setTimeout(() => {
-            if (hint.parentNode) {
-                hint.remove();
-            }
-        }, 1500);
-    }
-
-    // ==================== 旋转矩阵工具函数 ====================
     function rotatePoint(x, y, angle) {
         const rad = angle * Math.PI / 180;
         const cos = Math.cos(rad);
         const sin = Math.sin(rad);
-        
         return {
             x: x * cos - y * sin,
             y: x * sin + y * cos
         };
     }
 
-    // ==================== 动画关键帧 ====================
     const rotateToggleKeyframes = [
         {
             '@all': { scale: '1', translate: '0px 0px' },
@@ -427,7 +353,6 @@ body.bcmnp-dragging-active {
         }
     }
 
-    // ==================== 主控制器 ====================
     class RotateController {
         constructor() {
             this.timer = null;
@@ -440,7 +365,6 @@ body.bcmnp-dragging-active {
             this.lastEnterTime = 0;
             this.animationCooldown = false;
             
-            // 拖动相关
             this.isDragging = false;
             this.dragStartX = 0;
             this.dragStartY = 0;
@@ -448,17 +372,14 @@ body.bcmnp-dragging-active {
             this.translateStartY = 0;
             this.dragLongPressTimer = null;
             
-            // 单击/长按检测器
-            this.isMouseDown = false;           // 鼠标是否按下
-            this.mouseDownTime = 0;              // 鼠标按下的时间戳
-            this.longPressThreshold = 500;       // 长按阈值（毫秒）
-            this.isLongPressReady = false;       // 是否已满足长按条件（等待移动）
+            this.isMouseDown = false;
+            this.mouseDownTime = 0;
+            this.longPressThreshold = 500;
+            this.isLongPressReady = false;
             
-            // 用于拦截点击的标记
             this.wasDragging = false;
             this.clickInterceptor = null;
             
-            // 鼠标移动监听（全局）
             this.globalMouseMoveHandler = (e) => this.onGlobalMouseMove(e);
             this.globalMouseUpHandler = (e) => this.onGlobalMouseUp(e);
 
@@ -476,8 +397,9 @@ body.bcmnp-dragging-active {
             const rotatePresets = document.querySelector('.bcmnp-rotate-presets');
             const rotateBtn = document.querySelector('.bpx-player-ctrl-rotate');
             const resetBtn = document.querySelector('#reset-position-btn');
+            const resetAllBtn = document.querySelector('#reset-all-btn');
 
-            if (!toggle || !panel || !scaleSlider || !rotateSlider || !scaleValue || !rotateValue || !scalePresets || !rotatePresets || !rotateBtn || !resetBtn) {
+            if (!toggle || !panel || !scaleSlider || !rotateSlider || !scaleValue || !rotateValue || !scalePresets || !rotatePresets || !rotateBtn || !resetBtn || !resetAllBtn) {
                 console.error('元素未找到');
                 return;
             }
@@ -492,8 +414,8 @@ body.bcmnp-dragging-active {
             this.rotatePresets = rotatePresets;
             this.rotateBtn = rotateBtn;
             this.resetBtn = resetBtn;
+            this.resetAllBtn = resetAllBtn;
 
-            // 事件监听
             this.rotateBtn.addEventListener('mouseenter', () => this.onMouseEnter());
             this.rotateBtn.addEventListener('mouseleave', () => this.onMouseLeave());
             this.panel.addEventListener('mouseenter', () => this.onPanelEnter());
@@ -506,8 +428,8 @@ body.bcmnp-dragging-active {
             this.rotatePresets.addEventListener('click', (e) => this.rotatePresetOnClick(e));
             
             this.resetBtn.addEventListener('click', () => this.resetPosition());
+            this.resetAllBtn.addEventListener('click', () => this.resetAll());
 
-            // 鼠标中键滚动控制滑条
             this.scaleSlider.addEventListener('wheel', (e) => this.handleWheel(e, this.scaleSlider, 1));
             this.rotateSlider.addEventListener('wheel', (e) => this.handleWheel(e, this.rotateSlider, 1));
             
@@ -516,10 +438,7 @@ body.bcmnp-dragging-active {
             if (scaleContainer) scaleContainer.addEventListener('wheel', (e) => this.handleWheel(e, this.scaleSlider, 1));
             if (rotateContainer) rotateContainer.addEventListener('wheel', (e) => this.handleWheel(e, this.rotateSlider, 1));
 
-            // 创建点击拦截器
             this.createClickInterceptor();
-            
-            // 视频拖动相关事件
             this.initDragEvents();
         }
 
@@ -572,75 +491,51 @@ body.bcmnp-dragging-active {
             videoWrap.addEventListener('mousemove', (e) => this.onVideoMouseMove(e), true);
             videoWrap.addEventListener('dragstart', (e) => e.preventDefault());
             
-            // 添加全局 mouseup 监听，确保在任何地方松开鼠标都能退出拖动状态
             document.addEventListener('mouseup', this.globalMouseUpHandler, true);
-            
-            setTimeout(() => showDragHint(), 3000);
         }
 
         onVideoClick(e) {
-            // 计算按下到松开的时间
             const clickDuration = Date.now() - this.mouseDownTime;
             
-            // 如果是短按（小于阈值）且没有拖动，让播放/暂停正常触发
             if (clickDuration < this.longPressThreshold && !this.isDragging && !this.wasDragging) {
-                log(`单击检测: ${clickDuration}ms，允许播放/暂停`);
-                return; // 不阻止，让事件正常传递
+                return;
             }
             
-            // 如果是长按或拖动，阻止点击事件
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            
-            log(`阻止点击事件 - 时长: ${clickDuration}ms, 长按就绪: ${this.isLongPressReady}, 拖动: ${this.isDragging}`);
-            
             return false;
         }
 
         onVideoMouseDown(e) {
             if (e.button !== 0) return;
             
-            log('鼠标按下');
-            
-            // 重置所有状态
             this.isLongPressReady = false;
             this.isDragging = false;
             this.wasDragging = false;
             
-            // 记录鼠标按下状态和时间
             this.isMouseDown = true;
             this.mouseDownTime = Date.now();
             
-            // 清除之前的定时器
             if (this.dragLongPressTimer) {
                 clearTimeout(this.dragLongPressTimer);
                 this.dragLongPressTimer = null;
             }
             
-            // 保存起始位置
             this.dragStartX = e.clientX;
             this.dragStartY = e.clientY;
             this.translateStartX = this.currentTranslateX;
             this.translateStartY = this.currentTranslateY;
             
-            // 设置长按检测定时器
             this.dragLongPressTimer = setTimeout(() => {
-                // 如果鼠标仍然按着，标记为长按就绪
                 if (this.isMouseDown) {
                     this.isLongPressReady = true;
-                    log('长按就绪: 500ms已到，等待移动激活拖动');
-                    
-                    // 添加全局鼠标移动监听
                     document.addEventListener('mousemove', this.globalMouseMoveHandler, true);
                 }
             }, this.longPressThreshold);
-            
-            // 不阻止默认行为
         }
 
         onVideoMouseMove(e) {
-            // 这个方法现在主要用于调试，实际移动处理在全局监听中
             if (this.isDragging) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -649,29 +544,22 @@ body.bcmnp-dragging-active {
 
         onVideoMouseUp(e) {
             if (e.button !== 0) return;
-            
-            log('鼠标松开 (video)');
             this.endDrag(e);
         }
 
         onGlobalMouseUp(e) {
             if (e.button !== 0) return;
-            
-            log('鼠标松开 (global)');
             this.endDrag(e);
         }
 
         endDrag(e) {
-            // 鼠标已松开
             this.isMouseDown = false;
             
-            // 清除长按定时器
             if (this.dragLongPressTimer) {
                 clearTimeout(this.dragLongPressTimer);
                 this.dragLongPressTimer = null;
             }
             
-            // 如果是拖动状态，处理拖动结束
             if (this.isDragging) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -687,7 +575,6 @@ body.bcmnp-dragging-active {
                 }
                 document.body.classList.remove('bcmnp-dragging-active');
                 
-                // 移除全局鼠标监听
                 document.removeEventListener('mousemove', this.globalMouseMoveHandler, true);
                 
                 if (this.clickInterceptor) {
@@ -696,20 +583,16 @@ body.bcmnp-dragging-active {
                     }, 200);
                 }
                 
-                log(`拖动结束，位置: (${this.currentTranslateX.toFixed(1)}, ${this.currentTranslateY.toFixed(1)})`);
-                
                 setTimeout(() => {
                     this.wasDragging = false;
                 }, 300);
             } else {
-                // 如果不是拖动，清理状态
                 this.isLongPressReady = false;
                 document.removeEventListener('mousemove', this.globalMouseMoveHandler, true);
             }
         }
 
         onGlobalMouseMove(e) {
-            // 如果还没有长按就绪，或者鼠标已松开，不处理
             if (!this.isLongPressReady || !this.isMouseDown) {
                 return;
             }
@@ -717,19 +600,15 @@ body.bcmnp-dragging-active {
             e.preventDefault();
             e.stopPropagation();
             
-            // 计算从按下位置开始的移动距离
             const deltaX = Math.abs(e.clientX - this.dragStartX);
             const deltaY = Math.abs(e.clientY - this.dragStartY);
             
-            // 如果移动超过阈值，激活拖动
             if (deltaX > 3 || deltaY > 3) {
-                // 如果还没有激活拖动，现在激活
                 if (!this.isDragging) {
                     this.isDragging = true;
                     
                     const videoWrap = document.querySelector('.bpx-player-video-wrap');
                     if (videoWrap) {
-                        // 重新获取当前的translate值，确保起始位置正确
                         const transform = videoWrap.style.transform;
                         const translateMatch = transform.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
                         if (translateMatch) {
@@ -743,34 +622,24 @@ body.bcmnp-dragging-active {
                         if (this.clickInterceptor) {
                             this.clickInterceptor.classList.add('active');
                         }
-                        
-                        log(`拖动激活，起始位置: (${this.translateStartX}, ${this.translateStartY})`);
                     }
                 }
                 
-                // 处理拖动移动
                 if (this.isDragging) {
-                    // 计算鼠标在屏幕上的移动距离
                     const moveDeltaX = e.clientX - this.dragStartX;
                     const moveDeltaY = e.clientY - this.dragStartY;
                     
-                    // 根据当前旋转角度，将屏幕坐标的移动转换为视频坐标系中的移动
                     const rotatedDelta = rotatePoint(moveDeltaX, moveDeltaY, -this.currentAngle);
-                    
-                    // 根据缩放比例调整移动速度
                     const moveFactor = 1 / this.currentScale;
                     const adjustedDeltaX = rotatedDelta.x * moveFactor;
                     const adjustedDeltaY = rotatedDelta.y * moveFactor;
                     
-                    // 计算新的位置
                     const newTranslateX = this.translateStartX + adjustedDeltaX;
                     const newTranslateY = this.translateStartY + adjustedDeltaY;
                     
-                    // 更新位置
                     this.currentTranslateX = newTranslateX;
                     this.currentTranslateY = newTranslateY;
                     
-                    // 应用到视频
                     this.updateVideoTransform();
                 }
             }
@@ -780,8 +649,21 @@ body.bcmnp-dragging-active {
             this.currentTranslateX = 0;
             this.currentTranslateY = 0;
             this.updateVideoTransform();
-            showDragHint('位置已重置');
-            log('位置重置');
+        }
+
+        resetAll() {
+            this.currentScale = 1;
+            this.currentAngle = 0;
+            this.currentTranslateX = 0;
+            this.currentTranslateY = 0;
+            
+            this.scaleSlider.value = '100';
+            this.scaleValue.textContent = '100%';
+            this.rotateSlider.value = '0';
+            this.rotateValue.textContent = '0°';
+            
+            this.updateActivePresets();
+            this.updateVideoTransform();
         }
 
         handleWheel(e, slider, step = 1) {
@@ -954,7 +836,6 @@ body.bcmnp-dragging-active {
         updateVideoTransform() {
             const video = document.querySelector('.bpx-player-video-wrap');
             if (!video) {
-                log('视频元素未找到');
                 return;
             }
 
@@ -985,7 +866,6 @@ body.bcmnp-dragging-active {
         }
     }
 
-    // ==================== 启动脚本 ====================
     async function main() {
         try {
             const settingBtn = await waitUntilElementReady('.bpx-player-ctrl-btn.bpx-player-ctrl-setting');
@@ -996,8 +876,7 @@ body.bcmnp-dragging-active {
             setTimeout(() => {
                 window.rotateController = new RotateController();
                 const cost = (performance.now() - beginTime).toFixed(1);
-                printVersion('1.3.9', cost);
-                log('脚本加载完成！功能：旋转、缩放、鼠标中键调节、左键长按500ms后移动才激活拖动（已修复松开退出拖动状态）');
+                printVersion('1.4.0', cost);
             }, 500);
         } catch (error) {
             console.error('脚本初始化失败:', error);
