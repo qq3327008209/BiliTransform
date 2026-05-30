@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "B站视频旋转与缩放",
+  "version": "1.3.9",
+  "description": "为B站视频添加旋转和缩放控制，支持鼠标中键调节，支持鼠标左键长按拖动调整位置",
+  "author": "John Smish",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.bilibili.com/*",
+        "*://bilibili.com/*",
+        "*://*.bilibili.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "permissions": [],
+  "host_permissions": [
+    "*://www.bilibili.com/*",
+    "*://bilibili.com/*",
+    "*://*.bilibili.com/*"
+  ]
+}
